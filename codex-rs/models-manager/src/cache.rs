@@ -73,6 +73,7 @@ pub struct ModelsCacheEntry {
     pub client_version: Option<String>,
     /// Models returned by the catalog endpoint.
     #[serde(
+        serialize_with = "codex_protocol::openai_models::serialize_model_infos_with_legacy_base",
         deserialize_with = "codex_protocol::openai_models::deserialize_model_infos_with_legacy_base"
     )]
     pub models: Vec<ModelInfo>,
