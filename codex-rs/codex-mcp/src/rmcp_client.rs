@@ -106,6 +106,7 @@ pub(crate) struct ManagedClient {
     pub(crate) tools: Vec<ToolInfo>,
     pub(crate) tool_timeout: Option<Duration>,
     pub(crate) server_instructions: Option<String>,
+    pub(crate) server_supports_resources: bool,
     pub(crate) server_supports_sandbox_state_meta_capability: bool,
     pub(crate) codex_apps_tools_cache_context: Option<ConnectorRuntimeContext<ToolInfo>>,
 }
@@ -862,6 +863,7 @@ async fn start_server_task(
         .as_ref()
         .and_then(|exp| exp.get(MCP_SANDBOX_STATE_META_CAPABILITY))
         .is_some();
+    let server_supports_resources = initialize_result.capabilities.resources.is_some();
     let list_start = Instant::now();
     let fetch_ticket = codex_apps_tools_cache_context
         .as_ref()
@@ -906,6 +908,7 @@ async fn start_server_task(
         tools: client_tools,
         tool_timeout: None,
         server_instructions: initialize_result.instructions,
+        server_supports_resources,
         server_supports_sandbox_state_meta_capability,
         codex_apps_tools_cache_context,
     };

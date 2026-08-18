@@ -89,6 +89,7 @@ async fn test_step(
         tools: vec![tool.clone()],
         tool_timeout: None,
         server_instructions: None,
+        server_supports_resources: false,
         server_supports_sandbox_state_meta_capability: supports_sandbox_state_meta,
         codex_apps_tools_cache_context: None,
     });

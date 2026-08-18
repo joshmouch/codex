@@ -559,6 +559,7 @@ impl RmcpClient {
         params: Option<PaginatedRequestParams>,
         timeout: Option<Duration>,
     ) -> Result<ListResourcesResult> {
+        self.require_resources_capability().await?;
         self.refresh_oauth_if_needed().await?;
         let result = self
             .run_service_operation("resources/list", timeout, move |service| {
@@ -575,6 +576,7 @@ impl RmcpClient {
         params: Option<PaginatedRequestParams>,
         timeout: Option<Duration>,
     ) -> Result<ListResourceTemplatesResult> {
+        self.require_resources_capability().await?;
         self.refresh_oauth_if_needed().await?;
         let result = self
             .run_service_operation("resources/templates/list", timeout, move |service| {
@@ -591,6 +593,7 @@ impl RmcpClient {
         params: ReadResourceRequestParams,
         timeout: Option<Duration>,
     ) -> Result<ReadResourceResult> {
+        self.require_resources_capability().await?;
         self.refresh_oauth_if_needed().await?;
         let result = self
             .run_service_operation("resources/read", timeout, move |service| {
@@ -600,6 +603,25 @@ impl RmcpClient {
             .await?;
         self.persist_oauth_tokens().await;
         Ok(result)
+    }
+
+    async fn require_resources_capability(&self) -> Result<()> {
+        let state = self.state.lock().await;
+        match &*state {
+            ClientState::Ready { service, .. }
+                if service
+                    .peer()
+                    .peer_info()
+                    .is_some_and(|info| info.capabilities.resources.is_some()) =>
+            {
+                Ok(())
+            }
+            ClientState::Ready { .. } => Err(anyhow!(
+                "MCP server did not advertise the resources capability"
+            )),
+            ClientState::Connecting { .. } => Err(anyhow!("MCP client not initialized")),
+            ClientState::Closed => Err(anyhow!("MCP client is shut down")),
+        }
     }
 
     pub async fn call_tool(

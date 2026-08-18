@@ -32,6 +32,9 @@ impl McpConnectionSet {
             let Ok(managed_client) = view.connection.client().await else {
                 continue;
             };
+            if !managed_client.server_supports_resources {
+                continue;
+            }
             let timeout = view.tool_timeout;
             let client = managed_client.client;
             join_set.spawn(async move {
@@ -92,6 +95,9 @@ impl McpConnectionSet {
             let Ok(managed_client) = view.connection.client().await else {
                 continue;
             };
+            if !managed_client.server_supports_resources {
+                continue;
+            }
             let timeout = view.tool_timeout;
             let client = managed_client.client;
             join_set.spawn(async move {

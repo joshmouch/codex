@@ -57,6 +57,8 @@ use rmcp::model::ElicitationCapability;
 use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
 use rmcp::model::JsonObject;
+use rmcp::model::ListResourceTemplatesResult;
+use rmcp::model::ListResourcesResult;
 use rmcp::model::ListToolsResult;
 use rmcp::model::NumberOrString;
 use rmcp::model::PaginatedRequestParams;
@@ -226,6 +228,7 @@ struct RefreshTestTransportFactory {
     tool: Tool,
     list_started: Option<Arc<Notify>>,
     release_list: Option<Arc<Notify>>,
+    resource_requests: Option<Arc<AtomicUsize>>,
 }
 
 impl ServerHandler for RefreshTestTransportFactory {
@@ -249,6 +252,28 @@ impl ServerHandler for RefreshTestTransportFactory {
             next_cursor: None,
             meta: None,
         })
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        if let Some(calls) = &self.resource_requests {
+            calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(ListResourcesResult::default())
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        if let Some(calls) = &self.resource_requests {
+            calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(ListResourceTemplatesResult::default())
     }
 }
 
@@ -361,6 +386,7 @@ async fn create_test_managed_client(tools: Vec<ToolInfo>) -> ManagedClient {
         tools,
         tool_timeout: None,
         server_instructions: None,
+        server_supports_resources: false,
         server_supports_sandbox_state_meta_capability: false,
         codex_apps_tools_cache_context: None,
     }
@@ -388,6 +414,7 @@ async fn create_test_manager_with_ready_apps_client(
     tool_name: &str,
     list_started: Option<Arc<Notify>>,
     release_list: Option<Arc<Notify>>,
+    resource_requests: Option<Arc<AtomicUsize>>,
 ) -> anyhow::Result<Arc<McpConnectionSet>> {
     let tool = create_test_tool(CODEX_APPS_MCP_SERVER_NAME, tool_name);
     let client = Arc::new(
@@ -395,6 +422,7 @@ async fn create_test_manager_with_ready_apps_client(
             tool: tool.tool.clone(),
             list_started,
             release_list,
+            resource_requests,
         }))
         .await?,
     );
@@ -416,6 +444,7 @@ async fn create_test_manager_with_ready_apps_client(
         tools: vec![tool],
         tool_timeout: Some(Duration::from_secs(5)),
         server_instructions: None,
+        server_supports_resources: false,
         server_supports_sandbox_state_meta_capability: false,
         codex_apps_tools_cache_context: Some(cache_context.clone()),
     };
@@ -455,6 +484,51 @@ async fn create_test_manager_with_ready_apps_client(
         },
     );
     Ok(Arc::new(manager))
+}
+
+#[tokio::test]
+async fn resource_inventories_skip_servers_without_the_resources_capability() -> anyhow::Result<()>
+{
+    let codex_home = tempdir()?;
+    let cache_context = create_codex_apps_tools_cache_context(
+        codex_home.path().to_path_buf(),
+        Some("test-account"),
+        Some("test-user"),
+    );
+    let resource_requests = Arc::new(AtomicUsize::new(0));
+    let manager = create_test_manager_with_ready_apps_client(
+        cache_context,
+        "tools_only",
+        /*list_started*/ None,
+        /*release_list*/ None,
+        Some(Arc::clone(&resource_requests)),
+    )
+    .await?;
+
+    assert_eq!(manager.list_all_resources(|_| true).await, HashMap::new());
+    assert_eq!(
+        manager.list_all_resource_templates(|_| true).await,
+        HashMap::new()
+    );
+    let binding = capture_binding(&manager).await;
+    assert_eq!(binding.list_all_resources(|_| true).await, HashMap::new());
+    assert_eq!(
+        binding.list_all_resource_templates(|_| true).await,
+        HashMap::new()
+    );
+    let direct_error = binding
+        .list_resources(CODEX_APPS_MCP_SERVER_NAME, /*params*/ None)
+        .await
+        .expect_err("tools-only server must reject resources/list locally");
+    assert!(format!("{direct_error:#}").contains("did not advertise the resources capability"));
+    let direct_error = binding
+        .list_resource_templates(CODEX_APPS_MCP_SERVER_NAME, /*params*/ None)
+        .await
+        .expect_err("tools-only server must reject resources/templates/list locally");
+    assert!(format!("{direct_error:#}").contains("did not advertise the resources capability"));
+    assert_eq!(resource_requests.load(Ordering::Relaxed), 0);
+
+    Ok(())
 }
 
 fn create_test_manager_with_failed_apps_startup(
@@ -1276,6 +1350,7 @@ async fn hard_refresh_keeps_binding_override_local_when_shared_cache_loses_race(
         "a_only",
         Some(Arc::clone(&list_started)),
         Some(Arc::clone(&release_list)),
+        /*resource_requests*/ None,
     )
     .await?;
     let manager_b = create_test_manager_with_ready_apps_client(
@@ -1283,6 +1358,7 @@ async fn hard_refresh_keeps_binding_override_local_when_shared_cache_loses_race(
         "b_only",
         /*list_started*/ None,
         /*release_list*/ None,
+        /*resource_requests*/ None,
     )
     .await?;
 
@@ -2678,6 +2754,7 @@ async fn reconciliation_reuses_connection_without_relisting_regular_tools() -> a
         tools: initial_tools,
         tool_timeout: None,
         server_instructions: initialize.instructions,
+        server_supports_resources: false,
         server_supports_sandbox_state_meta_capability: false,
         codex_apps_tools_cache_context: None,
     };

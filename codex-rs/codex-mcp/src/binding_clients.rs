@@ -86,6 +86,9 @@ impl McpBindingClients {
             .iter()
             .filter(|(server_name, _)| include_server(server_name))
         {
+            if !managed.server_supports_resources {
+                continue;
+            }
             let server_name = server_name.clone();
             let client = Arc::clone(&managed.client);
             let timeout = managed.tool_timeout;
@@ -127,6 +130,9 @@ impl McpBindingClients {
             .iter()
             .filter(|(server_name, _)| include_server(server_name))
         {
+            if !managed.server_supports_resources {
+                continue;
+            }
             let server_name = server_name.clone();
             let client = Arc::clone(&managed.client);
             let timeout = managed.tool_timeout;
