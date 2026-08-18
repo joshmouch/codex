@@ -354,6 +354,36 @@ async fn file_cache_implements_models_cache_contract() {
 }
 
 #[tokio::test]
+async fn file_cache_serializes_legacy_base_instructions_for_older_clients() {
+    let codex_home = tempdir().expect("temp dir");
+    let cache_path = codex_home.path().join(MODEL_CACHE_FILE);
+    let cache = FileModelsCache::new(cache_path.clone(), DEFAULT_MODEL_CACHE_TTL);
+    let entry = ModelsCacheEntry {
+        fetched_at: Utc::now(),
+        etag: Some("file-etag".to_string()),
+        client_version: Some(crate::client_version_to_whole()),
+        models: vec![remote_model(
+            "file-cached",
+            "File Cached",
+            /*priority*/ 0,
+        )],
+    };
+
+    cache.store(&entry).await.expect("cache store succeeds");
+
+    let persisted: serde_json::Value = serde_json::from_slice(
+        &tokio::fs::read(cache_path)
+            .await
+            .expect("cache file should be readable"),
+    )
+    .expect("cache file should be valid JSON");
+    assert_eq!(
+        persisted["models"][0]["base_instructions"],
+        entry.models[0].get_model_instructions(/*personality*/ None)
+    );
+}
+
+#[tokio::test]
 async fn file_cache_refresh_ttl_renews_expired_entry_without_serving_it_stale() {
     let codex_home = tempdir().expect("temp dir");
     let cache = FileModelsCache::new(
