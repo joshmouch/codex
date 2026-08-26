@@ -18,7 +18,7 @@ import type { SandboxMode } from "./SandboxMode";
  * param will be ignored.
  *
  * If thread_id identifies a running thread, app-server rejoins that thread and
- * treats a non-empty path as a consistency check against the active rollout path.
+ * ignores path. The response reports the running thread's current rollout path.
  * Empty string path values are treated as absent.
  *
  * Prefer using thread_id whenever possible.

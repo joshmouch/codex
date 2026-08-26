@@ -399,6 +399,7 @@ async fn thread_revert_interrupts_active_turn_and_keeps_thread_loaded() -> Resul
             ..Default::default()
         })
         .await?;
+    let stale_rollout_path = thread.path.clone().expect("thread rollout path");
     let first_turn = mcp
         .start_turn_and_wait_for_completion(TurnStartParams {
             thread_id: thread.id.clone(),
@@ -476,10 +477,12 @@ async fn thread_revert_interrupts_active_turn_and_keeps_thread_loaded() -> Resul
             request_id,
             params: ThreadResumeParams {
                 thread_id: thread.id.clone(),
+                path: Some(stale_rollout_path),
                 ..Default::default()
             },
         })
         .await?;
+    assert_eq!(resumed.thread.path, reverted_thread.path);
     assert_eq!(resumed.approval_policy, AskForApproval::Never);
 
     mcp.start_turn_and_wait_for_completion(TurnStartParams {

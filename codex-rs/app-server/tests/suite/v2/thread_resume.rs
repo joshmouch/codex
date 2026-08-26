@@ -4291,7 +4291,7 @@ async fn thread_resume_rejects_history_when_thread_is_running() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_resume_rejects_mismatched_path_for_running_thread_id() -> Result<()> {
+async fn thread_resume_uses_running_thread_id_over_path() -> Result<()> {
     let server = responses::start_mock_server().await;
     let first_body = responses::sse(vec![
         responses::ev_response_created("resp-1"),
@@ -4371,84 +4371,27 @@ async fn thread_resume_rejects_mismatched_path_for_running_thread_id() -> Result
     )
     .await??;
 
-    #[cfg(windows)]
-    {
-        let active_path = thread.path.as_ref().expect("thread should have path");
-        let active_path_display = active_path.as_os_str().to_string_lossy();
-        let equivalent_path = if let Some(path) = active_path_display.strip_prefix(r"\\?\UNC\") {
-            PathBuf::from(format!(r"\\{path}"))
-        } else if let Some(path) = active_path_display.strip_prefix(r"\\?\") {
-            PathBuf::from(path)
-        } else if let Some(path) = active_path_display.strip_prefix(r"\\") {
-            PathBuf::from(format!(r"\\?\UNC\{path}"))
-        } else {
-            PathBuf::from(format!(r"\\?\{active_path_display}"))
-        };
-        let normalized_resume_id = primary
-            .send_thread_resume_request(ThreadResumeParams {
-                thread_id: thread_id.clone(),
-                path: Some(equivalent_path),
-                ..Default::default()
-            })
-            .await?;
-        let normalized_resume_resp: JSONRPCResponse = timeout(
-            DEFAULT_READ_TIMEOUT,
-            primary.read_stream_until_response_message(RequestId::Integer(normalized_resume_id)),
-        )
-        .await??;
-        let ThreadResumeResponse { thread, .. } =
-            to_response::<ThreadResumeResponse>(normalized_resume_resp)?;
-        assert_eq!(thread.id, thread_id);
-    }
-
-    let stale_thread_id = Uuid::new_v4().to_string();
-    let stale_path = rollout_path(codex_home.path(), "2025-01-01T00-00-00", &stale_thread_id);
-    std::fs::create_dir_all(stale_path.parent().expect("stale path parent"))?;
-    let thread_uuid = Uuid::parse_str(&stale_thread_id)?;
-    let mut stale_file = std::fs::File::create(&stale_path)?;
-    let stale_meta = json!({
-        "timestamp": "2025-01-01T00:00:00Z",
-        "type": "session_meta",
-        "payload": {
-            "session_id": thread_uuid,
-            "id": thread_uuid,
-            "timestamp": "2025-01-01T00:00:00Z",
-            "cwd": codex_home.path(),
-            "originator": "test_originator",
-            "cli_version": "test_version",
-            "source": "cli",
-            "model_provider": "test-provider",
-        },
-    });
-    writeln!(stale_file, "{stale_meta}")?;
-    let stale_user_event = json!({
-        "timestamp": "2025-01-01T00:00:00Z",
-        "type": "event_msg",
-        "payload": {
-            "type": "user_message",
-            "message": "stale history",
-            "kind": "plain",
-        },
-    });
-    writeln!(stale_file, "{stale_user_event}")?;
-
-    let stale_resume_id = primary
+    // `thread_id` is the stable identity for a loaded thread. The path is not
+    // consulted, so a path captured before a replacement rollout cannot keep a
+    // client from rejoining the active in-memory thread.
+    let resume_id = primary
         .send_thread_resume_request(ThreadResumeParams {
             thread_id: thread_id.clone(),
-            path: Some(stale_path),
+            path: Some(codex_home.path().join("retired-or-foreign-rollout.jsonl")),
             ..Default::default()
         })
         .await?;
-    let stale_resume_err: JSONRPCError = timeout(
+    let resume_response: JSONRPCResponse = timeout(
         DEFAULT_READ_TIMEOUT,
-        primary.read_stream_until_error_message(RequestId::Integer(stale_resume_id)),
+        primary.read_stream_until_response_message(RequestId::Integer(resume_id)),
     )
     .await??;
-    assert!(
-        stale_resume_err.error.message.contains("stale path"),
-        "unexpected resume error: {}",
-        stale_resume_err.error.message
-    );
+    let ThreadResumeResponse {
+        thread: resumed_thread,
+        ..
+    } = to_response::<ThreadResumeResponse>(resume_response)?;
+    assert_eq!(resumed_thread.id, thread_id);
+    assert_eq!(resumed_thread.path, thread.path);
 
     primary
         .interrupt_turn_and_wait_for_aborted(thread_id, running_turn.id, DEFAULT_READ_TIMEOUT)
