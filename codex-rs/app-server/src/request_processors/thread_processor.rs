@@ -4117,19 +4117,6 @@ impl ThreadRequestProcessor {
         if let Some((existing_thread_id, existing_thread, mut source_thread)) = running_thread {
             let paginated_resume =
                 matches!(source_thread.history_mode, ThreadHistoryMode::Paginated);
-            let existing_thread_rollout_path = existing_thread.rollout_path();
-            let active_path = existing_thread_rollout_path
-                .as_ref()
-                .or(source_thread.rollout_path.as_ref());
-            if let (Some(requested_path), Some(active_path)) = (params.path.as_ref(), active_path)
-                && !path_utils::paths_match_after_normalization(requested_path, active_path)
-            {
-                return Err(invalid_request(format!(
-                    "cannot resume running thread {existing_thread_id} with stale path: requested `{}`, active `{}`",
-                    requested_path.display(),
-                    active_path.display()
-                )));
-            }
             let config_snapshot = existing_thread.config_snapshot().await;
             let mismatch_details = collect_resume_override_mismatches(params, &config_snapshot);
             if !mismatch_details.is_empty() {

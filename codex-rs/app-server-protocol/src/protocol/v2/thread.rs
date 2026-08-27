@@ -328,7 +328,7 @@ pub struct ThreadSettingsUpdatedNotification {
 /// param will be ignored.
 ///
 /// If thread_id identifies a running thread, app-server rejoins that thread and
-/// treats a non-empty path as a consistency check against the active rollout path.
+/// ignores path. The response reports the running thread's current rollout path.
 /// Empty string path values are treated as absent.
 ///
 /// Prefer using thread_id whenever possible.
@@ -344,8 +344,8 @@ pub struct ThreadResumeParams {
 
     /// [UNSTABLE] Specify the rollout path to resume from.
     /// If specified for a non-running thread, the thread_id param will be ignored.
-    /// If thread_id identifies a running thread, the path must match the active
-    /// rollout path.
+    /// If thread_id identifies a running thread, the path is ignored and the active
+    /// rollout is selected.
     #[experimental("thread/resume.path")]
     #[serde(
         default,
