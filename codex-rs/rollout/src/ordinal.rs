@@ -66,9 +66,17 @@ pub(crate) fn ordinal_state_for_rollout(
     }
 
     let mut scanner = ReverseJsonlScanner::new(file)?;
+    // Decode through `decode_rollout_line` rather than a typed `RolloutLine` parse: with
+    // `serde_json/arbitrary_precision` enabled anywhere in the binary, Serde's flattened-envelope
+    // buffering rejects records that carry floats (for example `token_count` rate limits). The
+    // SQLite projection already decodes this way, so the two must agree on which durable record is
+    // final or a resumed writer reuses an ordinal the projection has already consumed.
     let record = loop {
-        match scanner.scan_next::<RolloutLine>()? {
-            Some(ScanOutcome::Parsed(record)) => break record,
+        match scanner.scan_next::<serde_json::Value>()? {
+            Some(ScanOutcome::Parsed(value)) => match crate::decode_rollout_line(value) {
+                Ok(record) => break record,
+                Err(_) => continue,
+            },
             Some(ScanOutcome::Rejected(_)) => continue,
             None => {
                 return Err(io::Error::other(format!(
@@ -111,12 +119,14 @@ fn read_history_metadata(
         if line.trim().is_empty() {
             continue;
         }
-        let record: RolloutLine = serde_json::from_str(line.as_str()).map_err(|error| {
-            io::Error::other(format!(
-                "failed to parse first rollout record at {}: {error}",
-                path.display()
-            ))
-        })?;
+        let record: RolloutLine = serde_json::from_str::<serde_json::Value>(line.as_str())
+            .and_then(crate::decode_rollout_line)
+            .map_err(|error| {
+                io::Error::other(format!(
+                    "failed to parse first rollout record at {}: {error}",
+                    path.display()
+                ))
+            })?;
         let RolloutItem::SessionMeta(session_meta) = record.item else {
             return Err(io::Error::other(format!(
                 "rollout at {} does not start with session metadata",
