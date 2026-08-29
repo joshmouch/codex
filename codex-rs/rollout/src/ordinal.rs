@@ -72,11 +72,8 @@ pub(crate) fn ordinal_state_for_rollout(
     // SQLite projection already decodes this way, so the two must agree on which durable record is
     // final or a resumed writer reuses an ordinal the projection has already consumed.
     let record = loop {
-        match scanner.scan_next::<serde_json::Value>()? {
-            Some(ScanOutcome::Parsed(value)) => match crate::decode_rollout_line(value) {
-                Ok(record) => break record,
-                Err(_) => continue,
-            },
+        match scanner.scan_next_rollout_line()? {
+            Some(ScanOutcome::Parsed(record)) => break record,
             Some(ScanOutcome::Rejected(_)) => continue,
             None => {
                 return Err(io::Error::other(format!(
@@ -119,9 +116,8 @@ fn read_history_metadata(
         if line.trim().is_empty() {
             continue;
         }
-        let record: RolloutLine = serde_json::from_str::<serde_json::Value>(line.as_str())
-            .and_then(crate::decode_rollout_line)
-            .map_err(|error| {
+        let record: RolloutLine =
+            crate::decode_rollout_line_str(line.as_str()).map_err(|error| {
                 io::Error::other(format!(
                     "failed to parse first rollout record at {}: {error}",
                     path.display()
