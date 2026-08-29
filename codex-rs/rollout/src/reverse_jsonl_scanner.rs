@@ -4,6 +4,10 @@ use std::io::Seek;
 use std::io::SeekFrom;
 
 use serde::de::DeserializeOwned;
+use serde_json::Value;
+
+use crate::RolloutLine;
+use crate::decode_rollout_line;
 
 const READ_CHUNK_SIZE: usize = 64 * 1024;
 
@@ -126,6 +130,20 @@ where
                 self.chunk_position = 0;
             }
         }
+    }
+
+    /// Scans the next record through the canonical persisted-rollout decoder.
+    pub fn scan_next_rollout_line(&mut self) -> io::Result<Option<ScanOutcome<RolloutLine>>> {
+        let Some(outcome) = self.scan_next::<Value>()? else {
+            return Ok(None);
+        };
+        Ok(Some(match outcome {
+            ScanOutcome::Parsed(value) => match decode_rollout_line(value) {
+                Ok(line) => ScanOutcome::Parsed(line),
+                Err(error) => ScanOutcome::Rejected(error),
+            },
+            ScanOutcome::Rejected(error) => ScanOutcome::Rejected(error),
+        }))
     }
 
     fn finish_record<T>(&mut self) -> Option<ScanOutcome<T>>

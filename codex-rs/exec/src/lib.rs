@@ -79,7 +79,6 @@ use codex_core::read_session_meta_line;
 use codex_feedback::CodexFeedback;
 use codex_git_utils::get_git_repo_root;
 use codex_history::RolloutItem;
-use codex_history::RolloutLine;
 use codex_login::default_client::set_default_client_residency_requirement;
 use codex_login::default_client::set_default_originator;
 use codex_login::enforce_login_restrictions;
@@ -1569,7 +1568,7 @@ async fn parse_latest_turn_context_cwd(path: &Path) -> Option<PathBuf> {
         if trimmed.is_empty() {
             continue;
         }
-        let Ok(rollout_line) = serde_json::from_str::<RolloutLine>(trimmed) else {
+        let Ok(rollout_line) = codex_rollout::decode_rollout_line_str(trimmed) else {
             continue;
         };
         if let RolloutItem::TurnContext(item) = rollout_line.item {

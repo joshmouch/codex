@@ -166,3 +166,35 @@ fn scans_record_spanning_three_read_chunks() -> std::io::Result<()> {
 
     assert_records(&mut scanner, &["third", &large_value, "first"])
 }
+
+#[test]
+fn scans_rollout_lines_through_canonical_decoder() -> std::io::Result<()> {
+    let input = br#"{"timestamp":"2025-01-01T00:00:00Z","ordinal":7,"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":null,"limit_name":null,"primary":{"used_percent":12.5,"window_minutes":60,"resets_at":1800000000},"secondary":null,"credits":null,"individual_limit":null,"spend_control_reached":null,"plan_type":null,"rate_limit_reached_type":null}}}
+"#;
+    let mut scanner = ReverseJsonlScanner::new(Cursor::new(input.as_slice()))?;
+
+    let line = parsed(scanner.scan_next_rollout_line()?);
+    let value = serde_json::to_value(line)?;
+    assert_eq!(value["ordinal"], serde_json::json!(7));
+    assert_eq!(
+        value["payload"]["rate_limits"]["primary"]["used_percent"],
+        serde_json::json!(12.5)
+    );
+    assert!(scanner.scan_next_rollout_line()?.is_none());
+    Ok(())
+}
+
+#[test]
+fn canonical_rollout_scan_preserves_unknown_record_recovery() -> std::io::Result<()> {
+    let input = b"{\"timestamp\":\"2025-01-01T00:00:00Z\",\"ordinal\":1,\"type\":\"event_msg\",\"payload\":{\"type\":\"warning\",\"message\":\"older\"}}\n{\"timestamp\":\"2025-01-01T00:00:01Z\",\"ordinal\":2,\"type\":\"future_item\",\"payload\":{}}\n";
+    let mut scanner = ReverseJsonlScanner::new(Cursor::new(input.as_slice()))?;
+
+    assert!(matches!(
+        scanner.scan_next_rollout_line()?,
+        Some(ScanOutcome::Rejected(_))
+    ));
+    let older = parsed(scanner.scan_next_rollout_line()?);
+    assert_eq!(older.ordinal, Some(1));
+    assert!(scanner.scan_next_rollout_line()?.is_none());
+    Ok(())
+}
