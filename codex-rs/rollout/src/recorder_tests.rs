@@ -14,11 +14,14 @@ use codex_protocol::protocol::AgentMessageEvent;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::HistoryPosition;
+use codex_protocol::protocol::RateLimitSnapshot;
+use codex_protocol::protocol::RateLimitWindow;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionMeta;
 use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::ThreadHistoryMode;
+use codex_protocol::protocol::TokenCountEvent;
 use codex_protocol::protocol::TurnContextItem;
 use codex_protocol::protocol::UserMessageEvent;
 use codex_protocol::security_risk::SecurityRiskScore;
@@ -1114,6 +1117,56 @@ async fn append_rollout_item_to_path_assigns_next_paginated_ordinal() -> std::io
 
     let lines = read_rollout_lines(&rollout_path)?;
     assert_eq!(lines.last().and_then(|line| line.ordinal), Some(5));
+    Ok(())
+}
+
+#[tokio::test]
+async fn append_after_float_rate_limit_record_does_not_reuse_its_ordinal() -> std::io::Result<()> {
+    // The final durable record carries floats. Under `serde_json/arbitrary_precision`, which the
+    // app-server binary enables through feature unification, a typed `RolloutLine` parse rejects
+    // it while the SQLite projection's decoder accepts it. The resumed writer must still see it
+    // as the final record, or it reissues ordinal 2 and every later projection fails with
+    // "expected ordinal 3, got 2".
+    let home = TempDir::new().expect("temp dir");
+    let rollout_path = home.path().join("rollout.jsonl");
+    write_paginated_rollout(&rollout_path, ThreadId::new(), &[1])?;
+    let token_count = RolloutLine {
+        timestamp: "2026-07-09T00:00:02Z".to_string(),
+        ordinal: Some(2),
+        item: RolloutItem::EventMsg(EventMsg::TokenCount(TokenCountEvent {
+            info: None,
+            rate_limits: Some(RateLimitSnapshot {
+                limit_id: None,
+                limit_name: None,
+                primary: Some(RateLimitWindow {
+                    used_percent: 12.5,
+                    window_minutes: Some(60),
+                    resets_at: Some(1_800_000_000),
+                }),
+                secondary: None,
+                credits: None,
+                individual_limit: None,
+                spend_control_reached: None,
+                plan_type: None,
+                rate_limit_reached_type: None,
+            }),
+        })),
+    };
+    let mut file = File::options().append(true).open(&rollout_path)?;
+    writeln!(file, "{}", serde_json::to_string(&token_count)?)?;
+    drop(file);
+
+    append_rollout_item_to_path(&rollout_path, &agent_message_item("offline")).await?;
+
+    let ordinals = fs::read_to_string(&rollout_path)?
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .map(|value| value["ordinal"].as_u64())
+                .map_err(std::io::Error::other)
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    assert_eq!(ordinals, vec![Some(0), Some(1), Some(2), Some(3)]);
     Ok(())
 }
 
